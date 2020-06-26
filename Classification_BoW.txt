@@ -1,0 +1,394 @@
+# %%
+# importing all the required modules
+
+from importlib import reload
+import nltk
+from bs4 import BeautifulSoup
+from nltk.tokenize import sent_tokenize, word_tokenize
+from sklearn.feature_extraction.text import TfidfVectorizer,CountVectorizer
+import os
+import errno
+import string
+from nltk.corpus import reuters
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import stopwords
+from nltk import FreqDist
+from nltk.text import TextCollection
+import collections
+import numpy as np
+from nltk.tokenize import sent_tokenize, word_tokenize
+from sklearn.feature_extraction.text import TfidfVectorizer
+import pandas as pd
+import numpy as np
+from sklearn.neighbors import KNeighborsClassifier
+from prettytable import PrettyTable
+import time
+from datetime import timedelta
+from sklearn.metrics import recall_score,precision_score,average_precision_score,f1_score,accuracy_score
+from sklearn.preprocessing import label_binarize
+from imblearn.metrics import geometric_mean_score
+from sklearn import metrics
+from sklearn.metrics.cluster import homogeneity_score,completeness_score
+import statistics
+import math
+import sklearn.metrics 
+from sklearn.model_selection import KFold
+import csv
+from sklearn.model_selection import train_test_split
+from collections import Counter
+import math
+from scipy.spatial import distance
+import statistics
+from scipy.stats import pearsonr,entropy
+from nltk.stem import WordNetLemmatizer
+nltk.download('reuters')
+def loadReutersData(documents,labels):
+    categories_list=['acq','crude','earn','grain','interest','money-fx','ship','trade']
+    docCount=0
+    for i in range(0,len(categories_list)):
+        category_docs = reuters.fileids(categories_list[i])
+        print (categories_list[i])
+        for document_id in reuters.fileids(categories_list[i]):
+            if(len(reuters.categories(document_id))==1):
+                content=str(reuters.raw(document_id))
+                soup = BeautifulSoup(content)
+                content=soup.get_text()
+                documents.append(content)
+                docCount+=1
+                labels.append(str(reuters.categories(document_id)))
+
+def loadWebKbData(path, documents,labels):
+    print(path)
+    for root, dirs, files in os.walk(path):  
+        for filename in files:
+            try:
+                #print root
+                name = os.path.join(root, filename)
+                #print name
+                end=len(name)-len(filename)
+                test=name[len(path)+1:end]
+                for i in range(0,len(test)):
+                    if test[i]=='\\':
+                        labels.append(test[0:i])
+                        break
+                f = open(name, "rb").read()
+                f=f.decode('ISO-8859-1', 'ignore')
+                content=str(f)
+                rawData.append(f)
+                soup = BeautifulSoup(content)
+                content=soup.get_text()
+                documents.append(content)  
+            except IOError as exc:
+                if exc.errno != errno.EISDIR:
+                       raise
+'''
+*****************************************Distnace measures*******************************************
+
+'''
+def Manhattan(doc1,doc2,measure="MinMax"):
+    return distance.cityblock(doc1,doc2)
+
+def Euclidean(a, b):#distance
+    return distance.euclidean(a,b)
+
+def Cosine(a, b):#distance
+    return distance.cosine(a,b)
+
+def Jaccard(a, b):#distance
+    return distance.jaccard(a,b)
+def bhatta(a,b):
+    length=len(a)
+    score = 0;
+    score=np.sum(np.sqrt( np.multiply(a,b) ))
+    distance=-1*np.log(score)
+    return distance;        
+def KL(a, b):
+    return entropy(a,b)
+def PDSM(doc1,doc2):
+    a=set(np.nonzero(doc1)[0])  #indices of non zero elements in doc1
+    b=set(np.nonzero(doc2)[0])  #indices of non zero elements in doc2
+    intersection=sum(np.minimum(doc1,doc2))
+    union=sum(np.maximum(doc1,doc2))
+    PF=len(a.intersection(b))
+    M=len(doc1)
+    AF=len(set(range(0,M))-(a.union(b)))
+    psdm=(intersection/union)*((PF+1)/(M-AF+1))
+    return psdm
+def STB_SM(doc1,doc2):
+    a=set(np.nonzero(doc1)[0])  
+    b=set(np.nonzero(doc2)[0])
+    intersection=np.array(list(a.intersection(b)))
+    comp1=a-b
+    comp2=b-a   
+    comp1=np.array(list(comp1))
+    comp2=np.array(list(comp2))
+    a=np.array(list(a))
+    b=np.array(list(b))
+    X,Y,D1,D2,Z1,Z2,sim=0,0,0,0,0,0,0
+    if len(intersection)>0:
+        X=np.sum(doc1[intersection])
+        Y=np.sum(doc2[intersection])
+    if len(comp1)>0:
+        D1=np.sum(doc1[comp1])
+    if len(comp2)>0:
+        D2=np.sum(doc2[comp2])
+    if len(a)>0:
+        Z1=np.sum(doc1[a])
+    if len(b)>0:
+        Z2=np.sum(doc2[b]) 
+    if Z1!=0 and Z2!=0:
+        sim=((X*Y)/(Z1*Z2))*(1-((D1*D2)/(Z1*Z2)))
+    return sim
+'''
+***************************************** End of Distnace measures*******************************************
+
+'''
+
+def most_common(lst):
+    return max(set(lst), key=lst.count)
+def tokenize1(documents):
+    tokens=[]
+    content= documents
+    tokens=(word_tokenize(content))
+    tokens= [token.lower() for token in tokens ]
+    tokens = [token for token in tokens if token not in stopwords]
+    tokens= [token for token in tokens if token.isalpha()]
+    lemmatizer = WordNetLemmatizer()
+    tokens = [lemmatizer.lemmatize(token) for token in tokens]
+    tokens= [token for token in tokens if len(token)>3 ]
+    return tokens
+
+def display_scores(vectorizer, tfidf_result):
+    scores = zip(vectorizer.get_feature_names(),
+                 np.asarray(tfidf_result.sum(axis=0)).ravel())
+def sorted_tfs(tfs,n):
+    doc,terms=tfs.shape
+    ind=(np.argsort(-(np.asarray(tfs.sum(axis=0)).ravel())))
+    scores=np.zeros((doc,n))
+    for i in range(0,len(documents)):
+        for j in range(0,n):
+            if(tfs[i,ind[j]]!=0):
+                scores[i,j]=tfs[i,ind[j]]
+    return scores
+def count_values_in_range(series, range_min, range_max):
+
+    # "between" returns a boolean Series equivalent to left <= series <= right.
+    # NA values will be treated as False.
+    return series.between(left=range_min, right=range_max).sum()
+
+class CustomKNN:
+
+    #constructor
+
+    def __init__(self,k = 1,metric="euclidean",termOccurance=None, docOccurance=None):
+
+        
+        self.k=k
+        #print ("KNN",self.k)
+        self.metric=metric
+        self.trainingData=[]
+        self.trainLabels=[]
+        self.smtp=None
+        self.termOccurance=termOccurance
+        self.docOccurance=docOccurance
+         
+    
+         
+
+    def fit(self, training_data, trainLabels ):
+        self.trainingData=training_data
+        self.trainLabels=trainLabels
+        
+            
+       
+    def predict(self, testData):
+        train=self.trainingData
+        if(self.metric=="SP"):
+            print("SP")
+        var=np.zeros(train.shape[1])
+        if(self.metric=="smtp" or self.metric=="smtp_improved"  or self.metric=="DSM"):
+            var=np.var(train,axis=0)
+            print("Vrainace is",var)
+        
+        distList=["KL","bhatta","Euclidean","Cosine","Jaccard","Manhattan"]#distance
+        func=globals()[self.metric]
+        predLabel=[]
+        for kk in range(0,60):
+            temp=[]
+            predLabel.append(temp)            
+        for i in(range(0,len(testData))):
+            
+            dist=[]
+            for j in(range(0,len(train))):
+                if ((not np.any(testData[i])) or (not np.any( train[j]))):
+                    if(self.metric in distList):
+                        dist.append(-1)
+                    else:
+                        dist.append(0)
+                else:
+                    dist.append(func(testData[i], train[j]))
+            flag=-1
+            if(self.metric in distList):
+                maxVal=max(dist)
+                dist=[maxVal if x==-1 else x for x in dist]
+                flag=1
+            for kk in range(0,60):
+                nn=(kk*2)+1
+                if(flag==-1):
+                    neigh= np.argpartition(np.array(dist), len(dist) - nn)[-nn:]
+                else:
+                    neigh= (np.argpartition(np.array(dist),nn))[:nn]
+                neighLabels=[self.trainLabels[ind] for ind in neigh]
+                label_predict=(most_common(neighLabels))
+                predLabel[kk].append(label_predict)
+
+
+        return predLabel
+        
+def dislay_tfidf(vectorizer,tfidf_result):
+    print(vectorizer.get_feature_names())
+    print(tfidf_result)
+    
+def display_scores(vectorizer, tfidf_result):
+    scores = zip(vectorizer.get_feature_names(),
+                 np.asarray(tfidf_result.sum(axis=0)).ravel())
+    sorted_scores = sorted(scores, key=lambda x: x[1], reverse=True)
+    return sorted_scores
+def groupData(labels,categories):
+
+    print (categories)
+    groups=[]
+    for i in range(0,len(categories)):
+        groups.append([0,0,0])
+    totalDocs=len(labels)
+    print (totalDocs)
+    for i in range(0,totalDocs):
+        tmp=(categories.index(labels[i]))
+        groups[tmp].append(i)
+    for i in range(0,len(categories)):
+        del (groups[i])[0:3]
+    return groups
+def PrintDetails(metric="smtp",time=None,measure= "Accuracy",Arr=None):
+    x = PrettyTable()
+    x.field_names = ["k","DataSet1"]
+    print("metric",metric)
+    print("time",time)
+    print("measure",measure)
+    tables.write("metric\t"+str(metric)+"\n")
+    tables.write("time\t"+str(time)+"\n")
+    tables.write("measure\t"+str(measure)+"\n")
+    average=0
+    for i in range(0,len(Arr)):
+        x.add_row([(i*2)+1,Arr[i]]) 
+        average+=Arr[i]
+    x.add_row(["Average",average/len(Arr)])   
+    tables.write(str(x))
+    print (x)
+
+def classify(k=3,metric="euclidean",termOccurance=None, docOccurance=None):
+    time1= time.time()
+    accuracy=[]
+    precision=[]
+    Recall=[]
+    fMeasure=[]
+    gMeasure=[]
+    averageMeanPrecison=[]
+    classifier =CustomKNN(k=k,metric=metric,termOccurance=termOccurance,docOccurance=docOccurance)  
+    classifier.fit(train_data, train_labels)
+    y_pred = classifier.predict(test_data) 
+    time2= time.time()
+
+    for i in range(0,len(y_pred)):
+        #Accuracy
+        accuracy.append(accuracy_score(test_labels, y_pred[i]))
+        #Precison
+        precision.append(precision_score(test_labels, y_pred[i],average='macro'))
+        #Recall
+        Recall.append(recall_score(test_labels, y_pred[i],average='macro'))
+        #f measure
+        fMeasure.append(f1_score(test_labels, y_pred[i],average='macro'))
+        #g measure
+        gMeasure.append(geometric_mean_score(test_labels, y_pred[i],average='macro'))
+        #Average Mean Precision
+        test = label_binarize(test_labels, classes=categories)
+        pred = label_binarize( y_pred[i], classes=categories)
+        averageMeanPrecison.append(average_precision_score(test, pred))
+        
+    #Accuracy
+    PrintDetails(metric=metric,time=str(timedelta(seconds=(time2-time1))),measure="Accuracy",Arr=accuracy)
+    #Precison
+    PrintDetails(metric=metric,time=str(timedelta(seconds=(time2-time1))),measure="Precision",Arr=precision)
+    #Recall
+    PrintDetails(metric=metric,time=str(timedelta(seconds=(time2-time1))),measure="Recall",Arr=Recall)
+    #f measure
+    PrintDetails(metric=metric,time=str(timedelta(seconds=(time2-time1))),measure="F Measure",Arr=fMeasure)
+    #g measure
+    PrintDetails(metric=metric,time=str(timedelta(seconds=(time2-time1))),measure="g Measure",Arr=gMeasure)
+    #Average Mean Precision
+    PrintDetails(metric=metric,time=str(timedelta(seconds=(time2-time1))),measure="Average Mean Precison",Arr=averageMeanPrecison)
+dataset='webkb'
+dvar=int(input("Which dataset do you want to process. Enter 1 for WebKb and 2 for Reuters"))
+if dvar==1:
+    dataset='webkb'
+elif dvar==2:
+    dataset='reuters'
+count=0
+documents=[]
+labels=[]
+rawData=[]
+token_dict = dict()
+if dataset=='webkb':
+    path = "webkb-data.gtar\\webkb"
+    loadWebKbData(path=path,documents=documents,labels=labels)
+else:
+    loadReutersData(documents=documents,labels=labels)
+print(len(documents))
+categories=list(set(labels))
+totalDocs= len(documents)
+print (totalDocs)
+stopwords = stopwords.words('english')
+tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
+vocabulary = set()
+term_docs=[]
+terms=[]
+totalDocs= len(documents)
+print (len(documents))
+print ("vectorize")
+tfidf = CountVectorizer(tokenizer=tokenize1)
+print ("fit transform")
+tfs = tfidf.fit_transform(documents)
+sorted_scores=display_scores(tfidf, tfs)
+flist=[len(sorted_scores)]
+measures=["Manhattan","Euclidean","Cosine","Jaccard","bhatta","KL","PDSM","STB_SM"]
+for n in flist:
+    arr=arr=sorted_tfs(tfs,n)
+    print (arr.shape)
+    xTrain, xTest, yTrain, yTest = train_test_split(arr, labels, test_size = 0.3, random_state = 42,stratify=labels)
+    train_data=xTrain
+    test_data=xTest
+    train_labels=yTrain
+    test_labels=yTest
+    allData=arr
+    termOcc=[]
+    docOcc=[]
+    for met in measures:
+        print(" No. of features",n)
+        k=1
+        print("###############")
+        fname='table_'+dataset+'_'+met+'_BoW_'+str(n)+'.txt'
+        tables = open(fname, 'w')
+        print ("nTerms",n)
+        tables.write("No. of features\t"+str(n)+"\n")
+        classify(k=k,metric=met,termOccurance=termOcc,docOccurance=docOcc)
+        tables.close()
+        print("###############")
+
+   
+   
+
+# %%
+
+        
+
+
+# %%
