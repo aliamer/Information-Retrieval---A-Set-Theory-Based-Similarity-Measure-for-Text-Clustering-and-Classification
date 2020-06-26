@@ -1,0 +1,555 @@
+# %%
+
+
+# %%
+# importing all the required modules
+
+from importlib import reload
+import nltk
+from bs4 import BeautifulSoup
+from nltk.tokenize import sent_tokenize, word_tokenize
+from sklearn.feature_extraction.text import TfidfVectorizer,CountVectorizer
+import os
+import errno
+import string
+from nltk.corpus import reuters
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import stopwords
+from nltk import FreqDist
+from nltk.text import TextCollection
+import collections
+import numpy as np
+from nltk.tokenize import sent_tokenize, word_tokenize
+from sklearn.feature_extraction.text import TfidfVectorizer
+import pandas as pd
+import numpy as np
+from sklearn.neighbors import KNeighborsClassifier
+from prettytable import PrettyTable
+import time
+from datetime import timedelta
+from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import label_binarize
+from imblearn.metrics import geometric_mean_score
+from sklearn import metrics
+#from sklearn.metrics import cluster 
+#from sklearn.metrics.cluster import homogeneity_score, adjusted_rand_score,completeness_score,
+import statistics
+import math
+import sklearn.metrics 
+from sklearn.model_selection import KFold
+import csv
+from sklearn.model_selection import train_test_split
+from collections import Counter
+import math
+from scipy.spatial import distance
+import statistics
+from scipy.stats import pearsonr,entropy
+from sklearn.metrics.pairwise import pairwise_distances
+from sklearn.preprocessing import LabelEncoder
+nltk.download('reuters')
+nltk.download('stopwords')
+nltk.download('punkt')
+nltk.download('wordnet')
+
+# %%
+DIAMETER_METHODS = ['mean_cluster', 'farthest']
+CLUSTER_DISTANCE_METHODS = ['nearest', 'farthest']
+
+
+def inter_cluster_distances(labels, distances, method='nearest'):
+    """Calculates the distances between the two nearest points of each cluster.
+    :param labels: a list containing cluster labels for each of the n elements
+    :param distances: an n x n numpy.array containing the pairwise distances between elements
+    :param method: `nearest` for the distances between the two nearest points in each cluster, or `farthest`
+    """
+    if method not in CLUSTER_DISTANCE_METHODS:
+        raise ValueError(
+            'method must be one of {}'.format(CLUSTER_DISTANCE_METHODS))
+
+    if method == 'nearest':
+        return __cluster_distances_by_points(labels, distances)
+    elif method == 'farthest':
+        return __cluster_distances_by_points(labels, distances, farthest=True)
+
+
+def __cluster_distances_by_points(labels, distances, farthest=False):
+    n_unique_labels = len(np.unique(labels))
+    cluster_distances = np.full((n_unique_labels, n_unique_labels),
+                                float('inf') if not farthest else 0)
+
+    np.fill_diagonal(cluster_distances, 0)
+
+    for i in np.arange(0, len(labels) - 1):
+        for ii in np.arange(i, len(labels)):
+            if labels[i] != labels[ii] and (
+                (not farthest and
+                 distances[i, ii] < cluster_distances[labels[i], labels[ii]])
+                    or
+                (farthest and
+                 distances[i, ii] > cluster_distances[labels[i], labels[ii]])):
+                cluster_distances[labels[i], labels[ii]] = cluster_distances[
+                    labels[ii], labels[i]] = distances[i, ii]
+    return cluster_distances
+
+
+def diameter(labels, distances, method='farthest'):
+    """Calculates cluster diameters
+    :param labels: a list containing cluster labels for each of the n elements
+    :param distances: an n x n numpy.array containing the pairwise distances between elements
+    :param method: either `mean_cluster` for the mean distance between all elements in each cluster, or `farthest` for the distance between the two points furthest from each other
+    """
+    if method not in DIAMETER_METHODS:
+        raise ValueError('method must be one of {}'.format(DIAMETER_METHODS))
+
+    n_clusters = len(np.unique(labels))
+    diameters = np.zeros(n_clusters)
+
+    if method == 'mean_cluster':
+        for i in range(0, len(labels) - 1):
+            for ii in range(i + 1, len(labels)):
+                if labels[i] == labels[ii]:
+                    diameters[labels[i]] += distances[i, ii]
+
+        for i in range(len(diameters)):
+            diameters[i] /= sum(labels == i)
+
+    elif method == 'farthest':
+        for i in range(0, len(labels) - 1):
+            for ii in range(i + 1, len(labels)):
+                if labels[i] == labels[ii] and distances[i, ii] > diameters[
+                        labels[i]]:
+                    diameters[labels[i]] = distances[i, ii]
+    return diameters
+
+
+def dunn(labels, distances, diameter_method='farthest',
+         cdist_method='nearest'):
+    """
+    Dunn index for cluster validation (larger is better).
+    
+    .. math:: D = \\min_{i = 1 \\ldots n_c; j = i + 1\ldots n_c} \\left\\lbrace \\frac{d \\left( c_i,c_j \\right)}{\\max_{k = 1 \\ldots n_c} \\left(diam \\left(c_k \\right) \\right)} \\right\\rbrace
+    
+    where :math:`d(c_i,c_j)` represents the distance between
+    clusters :math:`c_i` and :math:`c_j`, and :math:`diam(c_k)` is the diameter of cluster :math:`c_k`.
+    Inter-cluster distance can be defined in many ways, such as the distance between cluster centroids or between their closest elements. Cluster diameter can be defined as the mean distance between all elements in the cluster, between all elements to the cluster centroid, or as the distance between the two furthest elements.
+    The higher the value of the resulting Dunn index, the better the clustering
+    result is considered, since higher values indicate that clusters are
+    compact (small :math:`diam(c_k)`) and far apart (large :math:`d \\left( c_i,c_j \\right)`).
+    :param labels: a list containing cluster labels for each of the n elements
+    :param distances: an n x n numpy.array containing the pairwise distances between elements
+    :param diameter_method: see :py:function:`diameter` `method` parameter
+    :param cdist_method: see :py:function:`diameter` `method` parameter
+    
+    .. [Kovacs2005] KovÃ¡cs, F., LegÃ¡ny, C., & Babos, A. (2005). Cluster validity measurement techniques. 6th International Symposium of Hungarian Researchers on Computational Intelligence.
+    """
+
+    labels = LabelEncoder().fit(labels).transform(labels)
+
+    ic_distances = inter_cluster_distances(labels, distances, cdist_method)
+    min_distance = min(ic_distances[ic_distances.nonzero()])
+    max_diameter = max(diameter(labels, distances, diameter_method))
+
+    return min_distance / max_diameter
+
+# %%
+def loadReutersData(documents,labels):
+    categories_list=['acq','crude','earn','grain','interest','money-fx','ship','trade']
+    docCount=0
+    for i in range(0,len(categories_list)):
+        category_docs = reuters.fileids(categories_list[i])
+        print (categories_list[i])
+        for document_id in reuters.fileids(categories_list[i]):
+            if(len(reuters.categories(document_id))==1):
+                content=str(reuters.raw(document_id))
+                soup = BeautifulSoup(content)
+                content=soup.get_text()
+                documents.append(content)
+                docCount+=1
+                labels.append(str(reuters.categories(document_id)))
+def loadWebKbData(path, documents,labels):
+    print(path)
+    for root, dirs, files in os.walk(path):  
+        for filename in files:
+            try:
+                #print root
+                name = os.path.join(root, filename)
+                #print name
+                end=len(name)-len(filename)
+                test=name[len(path)+1:end]
+                for i in range(0,len(test)):
+                    if test[i]=='\\':
+                        labels.append(test[0:i])
+                        break
+                f = open(name, "rb").read()
+                f=f.decode('ISO-8859-1', 'ignore')
+                content=str(f)
+                rawData.append(f)
+                soup = BeautifulSoup(content)
+                content=soup.get_text()
+                documents.append(content)  
+            except IOError as exc:
+                if exc.errno != errno.EISDIR:
+                       raise
+def count_values_in_range(series, range_min, range_max):
+
+    # "between" returns a boolean Series equivalent to left <= series <= right.
+    # NA values will be treated as False.
+    return series.between(left=range_min, right=range_max).sum()
+
+
+
+
+# %%
+def Manhattan(doc1,doc2):
+    return distance.cityblock(doc1,doc2)                       
+def Euclidean(a, b):#distance
+    return distance.euclidean(a,b)
+def Cosine(a, b):#distance
+    return distance.cosine(a,b)
+def Jaccard(a, b):#distance
+    return distance.jaccard(a,b)
+def bhatta(a,b):
+
+    length=len(a)
+    score = 0;
+    score=np.sum(np.sqrt( np.multiply(a,b) ))
+    distance=-1*np.log(score)
+    return distance;        
+def KL(a, b):
+    return entropy(a,b)
+def PDSM(doc1,doc2):
+    a=set(np.nonzero(doc1)[0])  #indices of non zero elements in doc1
+    b=set(np.nonzero(doc2)[0])  #indices of non zero elements in doc2
+    intersection=sum(np.minimum(doc1,doc2))
+    union=sum(np.maximum(doc1,doc2))
+    PF=len(a.intersection(b))
+    M=len(doc1)
+    AF=len(set(range(0,M))-(a.union(b)))
+    psdm=(intersection/union)*((PF+1)/(M-AF+1))
+    return 1-psdm
+def STB_SM(doc1,doc2):
+    a=set(np.nonzero(doc1)[0])  
+    b=set(np.nonzero(doc2)[0])
+    intersection=np.array(list(a.intersection(b)))
+    comp1=a-b
+    comp2=b-a   
+    comp1=np.array(list(comp1))
+    comp2=np.array(list(comp2))
+    a=np.array(list(a))
+    b=np.array(list(b))
+    X,Y,D1,D2,Z1,Z2,sim=0,0,0,0,0,0,0
+    if len(intersection)>0:
+        X=np.sum(doc1[intersection])
+        Y=np.sum(doc2[intersection])
+    if len(comp1)>0:
+        D1=np.sum(doc1[comp1])
+    if len(comp2)>0:
+        D2=np.sum(doc2[comp2])
+    if len(a)>0:
+        Z1=np.sum(doc1[a])
+    if len(b)>0:
+        Z2=np.sum(doc2[b]) 
+    if Z1!=0 and Z2!=0:
+        sim=((X*Y)/(Z1*Z2))*(1-((D1*D2)/(Z1*Z2)))
+    return 1-sim
+
+
+
+
+# %%
+def most_common(lst):
+    return max(set(lst), key=lst.count)
+
+def tokenize1(documents):
+    tokens=[]
+    content= documents
+    tokens=(word_tokenize(content))
+    tokens= [token.lower() for token in tokens ]
+    tokens = [token for token in tokens if token not in stopwords]
+    tokens= [token for token in tokens if token.isalpha()]
+    lemmatizer = WordNetLemmatizer()
+    tokens = [lemmatizer.lemmatize(token) for token in tokens]
+    tokens= [token for token in tokens if len(token)>3 ]
+    return tokens
+def display_scores(vectorizer, tfidf_result):
+    scores = zip(vectorizer.get_feature_names(),
+                 np.asarray(tfidf_result.sum(axis=0)).ravel())
+    sorted_scores = sorted(scores, key=lambda x: x[1], reverse=True)
+    return sorted_scores
+def sorted_tfs(tfs,n):
+    doc,terms=tfs.shape
+    ind=(np.argsort(-(np.asarray(tfs.sum(axis=0)).ravel())))
+    scores=np.zeros((doc,n))
+    for i in range(0,len(documents)):
+        for j in range(0,n):
+            if(tfs[i,ind[j]]!=0):
+                scores[i,j]=tfs[i,ind[j]]
+    return scores
+def groupData(labels,categories):
+
+    ##print (categories)
+    groups=[]
+    for i in range(0,len(categories)):
+        groups.append([0,0,0])
+    totalDocs=len(labels)
+    ##print (totalDocs)
+    for i in range(0,totalDocs):
+        tmp=(categories.index(labels[i]))
+        groups[tmp].append(i)
+    for i in range(0,len(categories)):
+        del (groups[i])[0:3]
+    return groups
+
+def initialize_clusters(points, k):
+    ##print("""Initializes clusters as k randomly selected points from points.""")
+    ##print(points.shape[0],k)
+    return points[np.random.randint(points.shape[0], size=k)]
+    
+# Function for calculating the distance between centroids
+def get_distances(centroid, points,metric,par1=None, par2=None):
+    dist=[]
+    func = globals()[metric]
+    if metric=="simIT"or metric=="SP":
+        for pnt in points:
+            if (np.any(pnt)):
+                dist.append(func(pnt,centroid,par1,par2)) 
+            else:
+                dist.append(-1) 
+    elif metric=="smtp"  :
+        for pnt in points:
+            if (np.any(pnt)):
+                dist.append(func(pnt,centroid,par1)) 
+            else:
+                dist.append(-1) 
+    else:
+        for pnt in points:
+            if (np.any(pnt)):
+                dist.append(func(pnt,centroid)) 
+            else:
+                dist.append(-1) 
+        
+    
+        """Returns the distance the centroid is from each data point in points."""
+    maxVal=max(dist)
+    dist=[maxVal if x==-1 else x for x in dist]          
+    return dist
+def dunn_ind(labels,data):
+    d=pairwise_distances(data)
+    return dunn(labels, d)
+def kMeanClustering(X,k,metric):
+    k = k
+    X=arr       
+   
+    
+    maxiter = 50
+    # Initialize our centroids by picking random data points
+    ##print(X.shape)
+    centroids = initialize_clusters(X, k)
+    ##print("centroid shape")
+    ##print (centroids.shape)
+
+    # Initialize the vectors in which we will store the
+    # assigned classes of each data point and the
+    # calculated distances from each centroid
+    classes = np.zeros(X.shape[0], dtype=np.float64)
+    distances = np.zeros([X.shape[0], k], dtype=np.float64)
+
+    # Loop for the maximum number of iterations
+    for i in range(maxiter):
+        print("iteration",i)
+
+        # Assign all points to the nearest centroid
+        for i, c in enumerate(centroids):
+            distances[:, i] = get_distances(c, X,metric=metric)
+
+        # Determine class membership of each point
+        # by picking the closest centroid
+        classes = np.argmin(distances, axis=1)
+
+        # Update centroid location using the newly
+        # assigned data point classes
+        for c in range(k):
+            centroids[c] = np.mean(X[classes == c], 0)
+
+    return classes,centroids
+
+     
+def accuracy_score_Adjusted(y_true, y_pred):
+    clusters=set(y_pred)
+    mostCommon=0
+    totalDocs=len(y_true)
+    for y in clusters:
+        indices = [i for i, x in enumerate(y_pred) if x == y]
+        True_Values=[y_true[j] for j in indices]
+        common=(Counter(True_Values).most_common(1))
+        ###print(common)
+        mostCommon+=(common[0])[1]
+    accuracy_score=mostCommon/totalDocs
+    return accuracy_score
+        
+def entropy_score_Adjusted(y_true, y_pred):
+    clusters=set(y_pred)
+    labels=set(y_true)
+    n=len(y_true)
+    p=len(labels)
+    en_sum=0
+    for y in clusters:
+        indices = [i for i, x in enumerate(y_pred) if x == y]
+        True_Values=[y_true[j] for j in indices]
+        ni=len(True_Values)
+        sum_nij=0
+        for j in labels:
+            nij=True_Values.count(j)
+            if(nij>0):
+                sum_nij+=(-1*(nij/ni)*np.log(nij/ni))
+        en_sum+=ni*sum_nij   
+    entropy_score=en_sum/(np.log(p)*n)
+    return entropy_score
+def purity_score(y_true, y_pred):
+    # compute contingency matrix (also called confusion matrix)
+    contingency_matrix = metrics.cluster.contingency_matrix(y_true, y_pred)
+    # return purity
+    return np.sum(np.amax(contingency_matrix, axis=0)) / np.sum(contingency_matrix)
+
+def printDetails(metric="smtp",time=None,Arr=None,timeArr=None):
+    fname='kMean_clustering_'+dataset+'_BoW_'+str(metric)+'_'+str(k)+'.txt'
+    tables = open(fname, 'w')  
+    x = PrettyTable()
+    x.field_names = ["Measure","Value","Time"]
+    ##print("metric",metric)
+    ##print("time",time)
+    tables.write("metric\t"+str(metric)+"\n")
+    tables.write("time\t"+str(time)+"\n")
+    average=0
+    for i in range(0,len(Arr)):
+        x.add_row([(Arr[i])[0],(Arr[i])[1],timeArr[i]])   
+    tables.write(str(x))
+    print (x) 
+    tables.close()
+def Clustering(arr=None,k=1,metric='Euclidean'):
+    par1=None
+    par2=None
+    time1= time.time()
+        
+    classes,centers=kMeanClustering(X=arr,k=k,metric=metric)
+    time2= time.time()
+    
+    y_pred=classes#[categories[ind] for ind in classes]
+    tArr=[]
+    t1= time.time()
+    homogeneity=("homogeneity",metrics.homogeneity_score(labels, y_pred))
+    t2=time.time()
+    tArr.append(t2-t1)
+    t1=t2
+    completeness=("completeness",metrics.completeness_score(labels, y_pred))
+    t2=time.time()
+    tArr.append(t2-t1)
+    t1=t2
+    print("Rand Index")
+    RandIndex=("Rand Index",metrics.adjusted_rand_score(labels, y_pred))
+    t2=time.time()
+    tArr.append(t2-t1)
+    t1=t2
+    
+    ###internal measures
+    print("Calinski Harabasz Index")
+    if len(set(classes))==1:
+         Ch_Index=("Calinski Harabasz Index",-1.0)
+   
+    else:
+        Ch_Index=("Calinski Harabasz Index",metrics.calinski_harabasz_score(X=arr, labels=y_pred))
+    t2=time.time()
+    tArr.append(t2-t1)
+    t1=t2
+    print("Davies-Bouldin Index")
+    if len(set(classes))==1:
+        DbIndex=("Davies-Bouldin Index",-1.0)
+   
+    else:
+        DbIndex=("Davies-Bouldin Index",metrics.davies_bouldin_score(X=arr, labels=y_pred))
+    
+    t2=time.time()
+    tArr.append(t2-t1)
+    valArr=[]
+  
+    #valArr.append(entropy_ad)
+   # valArr.append(entropy_val)
+    #valArr.append(Purity)
+    valArr.append(homogeneity)
+    valArr.append(completeness)
+    valArr.append(RandIndex)
+    
+   # valArr.append(SilhouetteIndex)
+    valArr.append(Ch_Index)
+    valArr.append(DbIndex)
+   # valArr.append(dunn_val)
+   # valArr.append(separation)
+    #purity
+   # mArr=["Purity","Homogeneity","Completeness"]
+
+    printDetails(metric=metric,time=str(timedelta(seconds=(time2-time1))),Arr=valArr,timeArr=tArr)
+   
+    
+
+# %%
+count=0
+documents=[]
+labels=[]
+rawData=[]
+token_dict = dict()
+dataset='webkb'
+dvar=int(input("Which dataset do you want to process. Enter 1 for WebKb and 2 for Reuters"))
+if dvar==1:
+    dataset='webkb'
+elif dvar==2:
+    dataset='reuters'
+if dataset=='webkb':
+    path = "webkb-data.gtar\\webkb"
+    loadWebKbData(path=path,documents=documents,labels=labels)
+else:
+    loadReutersData(documents=documents,labels=labels)
+
+print(len(documents))
+categories=list(set(labels))
+totalDocs= len(documents)
+print (totalDocs)
+stopwords = stopwords.words('english')
+tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
+print ("vectorize")
+tfidf = CountVectorizer(tokenizer=tokenize1)
+print ("fit transform")
+tfs = tfidf.fit_transform(documents)   
+sorted_scores=display_scores(tfidf, tfs)
+k=0
+n=len(sorted_scores)
+groups=groupData(labels,categories)   
+init_centres=np.zeros((len(groups),n))
+arr=sorted_tfs(tfs,n)
+print (arr.shape)
+print("###############")
+kList=[4,8]
+for k in kList:
+    print("###############")
+    measures=["Manhattan","Euclidean","Cosine","Jaccard","KL","STB_SM","bhatta","PDSM"]
+    for met in measures:
+        print("metric", met)
+        print("k",k)
+        Clustering(arr=arr,k=k,metric=met)
+
+
+
+
+# %%
+
+
+
+
+# %%
+"""
+
+"""
+
+# %%
+
+
+# %%
